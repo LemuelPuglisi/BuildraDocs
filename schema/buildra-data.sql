@@ -1,12 +1,6 @@
 -- Buildra Database Data [Mock] 
 -- Version 1.0
 
-TRUNCATE TABLE work; 
-TRUNCATE TABLE customer; 
-TRUNCATE TABLE employee; 
-TRUNCATE TABLE item; 
-
-
 --
 -- Dumping data for table customer 
 --

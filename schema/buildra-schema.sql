@@ -5,6 +5,10 @@ DROP SCHEMA IF EXISTS buildra;
 CREATE SCHEMA buildra;
 USE buildra; 
 
+--
+-- TABLES DEFINITION
+--
+
 -- 
 -- Table structure for table 'customer' 
 -- 
@@ -52,15 +56,16 @@ CREATE TABLE work (
 --
 
 CREATE TABLE service (
-    code    SMALLINT UNSIGNED   NOT NULL, 
+    code                SMALLINT UNSIGNED NOT NULL, 
     pricelist_code      VARCHAR(16) NOT NULL UNIQUE, 
     short_description   TEXT NOT NULL, 
     full_description    TEXT NOT NULL, 
-    base_unit           VARCHAR(8) NOT NULL, 
+    base_unit           VARCHAR(16), 
     price               DECIMAL(10, 2) NOT NULL, 
     labor_incidence     FLOAT NOT NULL,      
+    pricelist_year      INT(4) NOT NULL, 
 
-    PRIMARY KEY (code), 
+    PRIMARY KEY (code, pricelist_year), 
     FULLTEXT KEY idx_service_sd (short_description), 
     FULLTEXT KEY idx_service_fd (full_description)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8; 
@@ -91,32 +96,14 @@ CREATE TABLE offered_service (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8; 
 
 --
--- Table structure for table 'price_quotation'
--- 
-
-CREATE TABLE price_quotation (
-    code SMALLINT UNSIGNED   NOT NULL AUTO_INCREMENT,
-    work SMALLINT UNSIGNED   NOT NULL,
-    storage_link    VARCHAR(256)    NOT NULL, 
-    created_at      TIMESTAMP       DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    PRIMARY KEY (code),
-    INDEX idx_price_quotation_ts (created_at) USING BTREE,
-    INDEX idx_price_quotation_work (work),
-
-    CONSTRAINT fk_price_quotation_work FOREIGN KEY (work) REFERENCES work (code)
-        ON DELETE CASCADE 
-        ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8; 
-
---
--- Table structure for table 'contract'
+-- Table structure for table 'document'
 --
 
-CREATE TABLE contract (
+CREATE TABLE document (
     code SMALLINT UNSIGNED   NOT NULL AUTO_INCREMENT,
     work SMALLINT UNSIGNED   NOT NULL,
-    storage_link    VARCHAR(256)    NOT NULL, 
+    type SET ('CONTRACT', 'QUOTATION')  NOT NULL, 
+    storage_link    VARCHAR(256)        NOT NULL, 
     created_at      TIMESTAMP       DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
     PRIMARY KEY (code),
@@ -208,6 +195,140 @@ CREATE TABLE presence (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 --
+--  Table structure for table 'paycheck'
+--
+
+CREATE TABLE paycheck (
+    code SMALLINT UNSIGNED   NOT NULL, 
+    employee VARCHAR(16)     NOT NULL, 
+    pay         DECIMAL(8, 2)   NOT NULL, 
+    deductions  DECIMAL(8, 2)   NOT NULL, 
+    bonus       DECIMAL(8, 2)   NOT NULL, 
+    pay_date    DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+
+    PRIMARY KEY (code), 
+    INDEX idx_paycheck_date (pay_date) USING BTREE, 
+    INDEX idx_paycheck_employee (employee), 
+
+    CONSTRAINT fk_paycheck_employee FOREIGN KEY (employee) REFERENCES employee (fiscal_code)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+--
+-- TRIGGERS DEFINITION
+--
+
+--
+-- Trigger that prevent update on service records
+--
+-- The standard pricelist is provided by the region
+-- and cannot be modified.  
+--
+
+DELIMITER $$
+
+CREATE TRIGGER tgr_prevent_service_update
+    BEFORE UPDATE 
+    ON service 
+    FOR EACH ROW  
+BEGIN
+    SIGNAL SQLSTATE '38003'
+      SET MESSAGE_TEXT = 'services cannot be updated';
+END$$ 
+
+DELIMITER ;
+
+--
+-- Trigger for updating total price of a work
+-- after inserting an offered service 
+--
+
+DELIMITER $$
+
+CREATE TRIGGER tgr_calculate_total_on_insert  
+    AFTER INSERT 
+    ON offered_service
+    FOR EACH ROW  
+BEGIN 
+
+    DECLARE service_price FLOAT; 
+
+    SELECT  price 
+    INTO    service_price
+    FROM    service S
+    WHERE   S.code = NEW.service; 
+
+    UPDATE  work W
+    SET     W.total_price = W.total_price + ((service_price * NEW.quantity) * NEW.PCP)
+    WHERE   W.code = NEW.work; 
+
+END $$
+
+DELIMITER ;
+
+--
+-- Trigger for updating total price of a work
+-- after updating an offered service 
+--
+
+DELIMITER $$
+
+CREATE TRIGGER tgr_calculate_total_on_update
+    AFTER UPDATE 
+    ON offered_service
+    FOR EACH ROW 
+BEGIN 
+
+    DECLARE service_price FLOAT; 
+    DECLARE old_instance_price FLOAT; 
+    DECLARE new_instance_price FLOAT; 
+
+    SELECT  price 
+    INTO    service_price
+    FROM    service S
+    WHERE   S.code = NEW.service; 
+
+    SET old_instance_price = (service_price * OLD.quantity) * OLD.PCP; 
+    SET new_instance_price = (service_price * NEW.quantity) * NEW.PCP; 
+
+    UPDATE  work W
+    SET     W.total_price = (W.total_price - old_instance_price) + new_instance_price
+    WHERE   W.code = NEW.work; 
+
+END $$
+
+DELIMITER ; 
+
+--
+-- Trigger for updating total price of a work 
+-- after deleting an offered service 
+--
+
+DELIMITER $$
+
+CREATE TRIGGER tgr_calculate_total_on_delete
+    AFTER DELETE 
+    ON offered_service
+    FOR EACH ROW 
+BEGIN 
+
+    DECLARE service_price FLOAT; 
+
+    SELECT  price 
+    INTO    service_price
+    FROM    service S
+    WHERE   S.code = OLD.service; 
+
+    UPDATE  work W
+    SET     W.total_price = W.total_price - ((service_price * OLD.quantity) * OLD.PCP)
+    WHERE   W.code = OLD.work; 
+
+END $$
+
+DELIMITER ; 
+
+--
 -- Trigger that limits working hours to 8 
 --
 
@@ -235,22 +356,35 @@ END $$
 DELIMITER ; 
 
 --
---  Table structure for table 'paycheck'
+-- Trigger for updating paycheck of the current month 
+-- when a presence has been inserted 
 --
 
-CREATE TABLE paycheck (
-    code SMALLINT UNSIGNED   NOT NULL, 
-    employee VARCHAR(16)     NOT NULL, 
-    pay         DECIMAL(8, 2)   NOT NULL, 
-    deductions  DECIMAL(8, 2)   NOT NULL, 
-    bonus       DECIMAL(8, 2)   NOT NULL, 
-    pay_date    DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, 
+DELIMITER $$
 
-    PRIMARY KEY (code), 
-    INDEX idx_paycheck_date (pay_date) USING BTREE, 
-    INDEX idx_paycheck_employee (employee), 
+-- CREATE TRIGGER tgr_calculate_paycheck_on_insert
 
-    CONSTRAINT fk_paycheck_employee FOREIGN KEY (employee) REFERENCES employee (fiscal_code)
-        ON DELETE CASCADE
-        ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+DELIMITER ; 
+
+--
+-- Trigger for updating paycheck of the current month 
+-- when a presence has been updated 
+--
+
+DELIMITER $$
+
+-- CREATE TRIGGER tgr_calculate_paycheck_on_update
+
+DELIMITER ; 
+
+--
+-- Trigger for updating paycheck of the current month 
+-- when a presence has been deleted 
+--
+
+
+DELIMITER $$
+
+-- CREATE TRIGGER tgr_calculate_paycheck_on_delete
+
+DELIMITER ; 
