@@ -14,7 +14,9 @@ CREATE TABLE customer (
     first_name  VARCHAR(32) NOT NULL, 
     last_name   VARCHAR(32) NOT NULL, 
     residence   VARCHAR(32) DEFAULT NULL,
+    birth_place VARCHAR(64) NOT NULL, 
     birthdate   DATE        NOT NULL,
+    email       VARCHAR(64), 
 
     PRIMARY KEY (fiscal_code), 
     INDEX   idx_customer_fc (fiscal_code), 
@@ -50,7 +52,7 @@ CREATE TABLE work (
 --
 
 CREATE TABLE service (
-    code    SMALLINT UNSIGNED   NOT NULL AUTO_INCREMENT, 
+    code    SMALLINT UNSIGNED   NOT NULL, 
     pricelist_code      VARCHAR(16) NOT NULL UNIQUE, 
     short_description   TEXT NOT NULL, 
     full_description    TEXT NOT NULL, 
@@ -93,7 +95,7 @@ CREATE TABLE offered_service (
 -- 
 
 CREATE TABLE price_quotation (
-    code SMALLINT UNSIGNED   NOT NULL,
+    code SMALLINT UNSIGNED   NOT NULL AUTO_INCREMENT,
     work SMALLINT UNSIGNED   NOT NULL,
     storage_link    VARCHAR(256)    NOT NULL, 
     created_at      TIMESTAMP       DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -112,7 +114,7 @@ CREATE TABLE price_quotation (
 --
 
 CREATE TABLE contract (
-    code SMALLINT UNSIGNED   NOT NULL,
+    code SMALLINT UNSIGNED   NOT NULL AUTO_INCREMENT,
     work SMALLINT UNSIGNED   NOT NULL,
     storage_link    VARCHAR(256)    NOT NULL, 
     created_at      TIMESTAMP       DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -131,7 +133,7 @@ CREATE TABLE contract (
 --
 
 CREATE TABLE item (
-    code SMALLINT UNSIGNED  NOT NULL,
+    code SMALLINT UNSIGNED  NOT NULL AUTO_INCREMENT,
     name VARCHAR(256)       NOT NULL, 
     description TEXT        NOT NULL,
     price DECIMAL(8, 2)     NOT NULL, 
@@ -148,7 +150,7 @@ CREATE TABLE item (
 -- 
 
 CREATE TABLE purchase (
-    code SMALLINT UNSIGNED  NOT NULL, 
+    code SMALLINT UNSIGNED  NOT NULL AUTO_INCREMENT, 
     item SMALLINT UNSIGNED  NOT NULL, 
     work SMALLINT UNSIGNED  NOT NULL, 
     amount INT    UNSIGNED  NOT NULL, 
@@ -189,8 +191,8 @@ CREATE TABLE employee (
 CREATE TABLE presence (
     work     SMALLINT UNSIGNED  NOT NULL, 
     employee VARCHAR(16)        NOT NULL,
-    working_date    DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, 
-    working_hours   FLOAT    NOT NULL, 
+    working_date    DATE        NOT NULL, 
+    working_hours   FLOAT       NOT NULL CHECK (working_hours <= 8), 
 
     PRIMARY KEY (work, employee, working_date), 
     INDEX idx_presence_date (working_date) USING BTREE, 
@@ -204,6 +206,33 @@ CREATE TABLE presence (
         ON DELETE CASCADE
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+--
+-- Trigger that limits working hours to 8 
+--
+
+DELIMITER $$
+
+CREATE TRIGGER tgr_limit_working_hours
+    BEFORE INSERT 
+    ON presence FOR EACH ROW
+BEGIN 
+
+    DECLARE total_working_hours FLOAT; 
+
+    SELECT  SUM(working_hours) 
+    INTO    total_working_hours
+    FROM    presence P
+    WHERE   P.employee = NEW.employee
+    AND     P.working_date = NEW.working_date; 
+
+    IF total_working_hours + NEW.working_hours > 8 THEN 
+        SET NEW.working_hours = 8 - total_working_hours; 
+    END IF;
+
+END $$ 
+
+DELIMITER ; 
 
 --
 --  Table structure for table 'paycheck'
