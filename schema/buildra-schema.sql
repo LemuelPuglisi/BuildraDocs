@@ -179,7 +179,7 @@ CREATE TABLE presence (
     work     SMALLINT UNSIGNED  NOT NULL, 
     employee VARCHAR(16)        NOT NULL,
     working_date    DATE        NOT NULL, 
-    working_hours   FLOAT       NOT NULL CHECK (working_hours <= 8), 
+    working_hours   FLOAT       NOT NULL CHECK (working_hours > 0 AND working_hours <= 8), 
 
     PRIMARY KEY (work, employee, working_date), 
     INDEX idx_presence_date (working_date) USING BTREE, 
@@ -199,7 +199,7 @@ CREATE TABLE presence (
 --
 
 CREATE TABLE paycheck (
-    code SMALLINT UNSIGNED   NOT NULL, 
+    code SMALLINT UNSIGNED   NOT NULL AUTO_INCREMENT, 
     employee VARCHAR(16)     NOT NULL, 
     pay         DECIMAL(8, 2)   NOT NULL, 
     deductions  DECIMAL(8, 2)   NOT NULL, 
@@ -341,6 +341,14 @@ BEGIN
 
     DECLARE total_working_hours FLOAT; 
 
+    -- check constrain works only on mysql -v > 8.15
+    -- so we need a workaround inside the trigger  
+
+    IF (NEW.working_hours <= 0 OR NEW.working_hours > 8) THEN 
+        SIGNAL SQLSTATE '22003'
+        SET MESSAGE_TEXT = 'working hours must fit ]0, 8] range';
+    END IF; 
+
     SELECT  SUM(working_hours) 
     INTO    total_working_hours
     FROM    presence P
@@ -362,7 +370,40 @@ DELIMITER ;
 
 DELIMITER $$
 
--- CREATE TRIGGER tgr_calculate_paycheck_on_insert
+CREATE TRIGGER tgr_calculate_paycheck_on_insert
+    AFTER INSERT 
+    ON presence 
+    FOR EACH ROW
+BEGIN 
+
+    DECLARE hourly_wage FLOAT; 
+    DECLARE salary_flag FLOAT; 
+
+    SELECT  E.hourly_wage 
+    INTO    hourly_wage
+    FROM    employee E
+    WHERE   E.fiscal_code = NEW.employee; 
+
+    SELECT  count(*)
+    INTO    salary_flag
+    FROM    paycheck P
+    WHERE   P.employee = NEW.employee
+    AND     year(P.pay_date)  = year(NEW.working_date) 
+    AND     month(P.pay_date) = month(NEW.working_date); 
+
+    IF (salary_flag = 0) THEN 
+        INSERT INTO paycheck
+        (employee, pay, deductions, bonus, pay_date)
+        VALUES(NEW.employee, 0, 0, 0, CURRENT_TIMESTAMP);
+    END IF; 
+
+    UPDATE  paycheck P
+    SET     P.pay = P.pay + (hourly_wage * NEW.working_hours)
+    WHERE   P.employee = NEW.employee
+    AND     year(P.pay_date)  = year(NEW.working_date) 
+    AND     month(P.pay_date) = month(NEW.working_date); 
+
+END $$
 
 DELIMITER ; 
 
@@ -373,7 +414,40 @@ DELIMITER ;
 
 DELIMITER $$
 
--- CREATE TRIGGER tgr_calculate_paycheck_on_update
+CREATE TRIGGER tgr_calculate_paycheck_on_update
+    AFTER UPDATE 
+    ON presence 
+    FOR EACH ROW 
+BEGIN 
+
+    DECLARE hourly_wage FLOAT; 
+    DECLARE salary_flag FLOAT; 
+
+    SELECT  E.hourly_wage 
+    INTO    hourly_wage
+    FROM    employee E
+    WHERE   E.fiscal_code = NEW.employee; 
+
+    SELECT  count(*)
+    INTO    salary_flag
+    FROM    paycheck P
+    WHERE   P.employee = NEW.employee
+    AND     year(P.pay_date)  = year(NEW.working_date) 
+    AND     month(P.pay_date) = month(NEW.working_date); 
+
+    IF (salary_flag = 0) THEN 
+        INSERT INTO paycheck
+        (employee, pay, deductions, bonus, pay_date)
+        VALUES(NEW.employee, 0, 0, 0, CURRENT_TIMESTAMP);
+    END IF; 
+
+    UPDATE  paycheck P
+    SET     P.pay = P.pay - hourly_wage * (OLD.working_hours - NEW.working_hours)
+    WHERE   P.employee = NEW.employee
+    AND     year(P.pay_date)  = year(NEW.working_date) 
+    AND     month(P.pay_date) = month(NEW.working_date); 
+
+END $$
 
 DELIMITER ; 
 
@@ -385,6 +459,37 @@ DELIMITER ;
 
 DELIMITER $$
 
--- CREATE TRIGGER tgr_calculate_paycheck_on_delete
+CREATE TRIGGER tgr_calculate_paycheck_on_delete
+    AFTER DELETE 
+    ON presence 
+    FOR EACH ROW 
+BEGIN 
+
+    DECLARE hourly_wage FLOAT; 
+    DECLARE salary_flag FLOAT; 
+
+    SELECT  E.hourly_wage 
+    INTO    hourly_wage
+    FROM    employee E
+    WHERE   E.fiscal_code = OLD.employee; 
+
+    SELECT  count(*)
+    INTO    salary_flag
+    FROM    paycheck P
+    WHERE   P.employee = OLD.employee
+    AND     year(P.pay_date)  = year(OLD.working_date) 
+    AND     month(P.pay_date) = month(OLD.working_date); 
+
+    IF (salary_flag <> 0) THEN 
+
+        UPDATE  paycheck P
+        SET     P.pay = P.pay - (hourly_wage * OLD.working_hours)
+        WHERE   P.employee = OLD.employee
+        AND     year(P.pay_date)  = year(OLD.working_date) 
+        AND     month(P.pay_date) = month(OLD.working_date); 
+
+    END IF; 
+
+END $$
 
 DELIMITER ; 
