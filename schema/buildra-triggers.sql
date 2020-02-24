@@ -194,15 +194,15 @@ BEGIN
     IF (salary_flag = 0) THEN 
         INSERT INTO paycheck
         (employee, pay, deductions, bonus, pay_date)
-        VALUES(NEW.employee, 0, 0, 0, CURRENT_TIMESTAMP);
+        VALUES(NEW.employee, 0, 0, 0, NEW.working_date);
     END IF; 
-
+    
     UPDATE  paycheck P
     SET     P.pay = P.pay + (hourly_wage * NEW.working_hours)
     WHERE   P.employee = NEW.employee
     AND     year(P.pay_date)  = year(NEW.working_date) 
     AND     month(P.pay_date) = month(NEW.working_date); 
-
+   
 END $$
 
 DELIMITER ; 
@@ -240,7 +240,7 @@ BEGIN
     IF (salary_flag = 0) THEN 
         INSERT INTO paycheck
         (employee, pay, deductions, bonus, pay_date)
-        VALUES(NEW.employee, 0, 0, 0, CURRENT_TIMESTAMP);
+        VALUES(NEW.employee, 0, 0, 0, NEW.working_date);
     END IF; 
 
     UPDATE  paycheck P
