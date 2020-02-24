@@ -162,6 +162,37 @@ DELIMITER ;
 --
 
 --
+-- Trigger for controlling that presence date is 
+-- placed after the commission date of a work 
+--
+/* DROP TRIGGER IF EXISTS tgr_prevent_time_traveling;
+
+DELIMITER $$
+
+CREATE TRIGGER tgr_prevent_time_traveling 
+    AFTER INSERT 
+    ON presence 
+    FOR EACH ROW 
+BEGIN 
+
+    DECLARE commission_date DATE; 
+
+    SELECT  commission_date
+    INTO    commission_date
+    FROM    work 
+    WHERE   code = NEW.work;
+
+    IF NEW.working_date < commission_date THEN 
+        SIGNAL SQLSTATE '38003'
+            SET MESSAGE_TEXT = 'working date must be after the commission date';
+    END IF 
+
+END $$
+
+DELIMITER ;  */
+
+
+--
 -- Trigger for updating paycheck of the current month 
 -- when a presence has been inserted 
 --
